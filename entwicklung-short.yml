@@ -1,1 +1,73 @@
-curl -sSL https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh | bash -s -- --channel 8.0 && curl -L docker-compose.shorts.akirottv.de > ~/Documents/docker-compose.yml && export DOTNET_ROOT=$HOME/.dotnet >> ~/.bashrc && export PATH=$PATH:$HOME/.dotnet >> ~/.bashrc |source ~/.bashrc
+#!/bin/bash
+set -euo pipefail
+
+# Offizielle Versionen/Downloads anpassen, falls du spaeter eine neuere Version willst.
+RIDER_VERSION="2026.1.0.1"
+DOTNET_SDK_VERSION="8.0.416"
+DOCKER_COMPOSE_URL="https://docker-compose.shorts.akirottv.de"
+
+ARCH="$(uname -m)"
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  hdiutil detach "/Volumes/JetBrains Rider" >/dev/null 2>&1 || true
+  if [[ -n "${RIDER_MOUNT:-}" && -d "${RIDER_MOUNT:-}" ]]; then
+    hdiutil detach "$RIDER_MOUNT" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+case "$ARCH" in
+  arm64)
+    DOTNET_URL="https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/sdk-${DOTNET_SDK_VERSION}-macos-arm64-installer"
+    RIDER_URL="https://download.jetbrains.com/rider/JetBrains.Rider-${RIDER_VERSION}-aarch64.dmg"
+    ARCH_LABEL="Apple Silicon (M1/M2/M3/...)"
+    ;;
+  x86_64)
+    DOTNET_URL="https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/sdk-${DOTNET_SDK_VERSION}-macos-x64-installer"
+    RIDER_URL="https://download.jetbrains.com/rider/JetBrains.Rider-${RIDER_VERSION}.dmg"
+    ARCH_LABEL="Intel"
+    ;;
+  *)
+    echo "Nicht unterstuetzte Architektur: $ARCH"
+    exit 1
+    ;;
+esac
+
+echo "Erkannte Architektur: $ARCH_LABEL"
+
+echo "Lade .NET SDK ${DOTNET_SDK_VERSION} fuer macOS herunter ..."
+curl -fL "$DOTNET_URL" -o "$TMP_DIR/dotnet-sdk.pkg"
+
+echo "Installiere .NET SDK ${DOTNET_SDK_VERSION} ..."
+sudo installer -pkg "$TMP_DIR/dotnet-sdk.pkg" -target /
+
+echo "Lade Rider ${RIDER_VERSION} herunter ..."
+curl -fL "$RIDER_URL" -o "$TMP_DIR/rider.dmg"
+
+echo "Binde Rider-DMG ein ..."
+RIDER_MOUNT="$(hdiutil attach "$TMP_DIR/rider.dmg" -nobrowse | awk -F'\t' '/\/Volumes\// {print $NF; exit}')"
+if [[ -z "$RIDER_MOUNT" ]]; then
+  echo "Konnte das Rider-DMG nicht mounten."
+  exit 1
+fi
+
+echo "Installiere Rider nach /Applications ..."
+APP_SOURCE="$(find "$RIDER_MOUNT" -maxdepth 1 -type d -name '*.app' | head -n 1)"
+if [[ -z "$APP_SOURCE" ]]; then
+  echo "Konnte die Rider-App im DMG nicht finden."
+  exit 1
+fi
+
+rm -rf "/Applications/JetBrains Rider.app"
+cp -R "$APP_SOURCE" "/Applications/JetBrains Rider.app"
+
+echo "Lade docker-compose.yml nach ~/Documents ..."
+mkdir -p "$HOME/Documents"
+curl -fL "$DOCKER_COMPOSE_URL" -o "$HOME/Documents/docker-compose.yml"
+
+echo "Pruefe Installationen ..."
+dotnet --list-sdks || true
+open -a "/Applications/JetBrains Rider.app" || true
+
+echo "Fertig. Rider und .NET 8 wurden installiert."
